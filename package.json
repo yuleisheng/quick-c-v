@@ -4,6 +4,14 @@
   "private": true,
   "description": "Dead simple local-network text, image, and video sync.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuleisheng/quick-c-v.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yuleisheng/quick-c-v/issues"
+  },
+  "homepage": "https://github.com/yuleisheng/quick-c-v#readme",
   "main": "server.js",
   "bin": {
     "quickcv": "bin/quickcv.js"
