@@ -4,6 +4,11 @@ Dead simple local-network sync for text, images, and videos.
 
 Run one tiny server on a Mac, open its LAN URL on every device, enter the same channel passcode, and everything in that channel stays in sync. No accounts, no cloud service, no build step.
 
+## Requirements
+
+- Node.js 24 or newer
+- npm
+
 ## Features
 
 - Instant shared text editing over WebSockets

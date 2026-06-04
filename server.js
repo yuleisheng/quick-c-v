@@ -4,7 +4,7 @@ const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
 const multer = require("multer");
-const Database = require("better-sqlite3");
+const { DatabaseSync } = require("node:sqlite");
 const { WebSocket, WebSocketServer } = require("ws");
 const { getLanUrls } = require("./lib/network");
 
@@ -60,10 +60,12 @@ function mediaUrlFor(fileName) {
 function createStore(dbPath) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-  const db = new Database(dbPath);
-  db.pragma("journal_mode = WAL");
-  db.pragma("busy_timeout = 5000");
+  const db = new DatabaseSync(dbPath);
   db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA busy_timeout = 5000;
+    PRAGMA foreign_keys = ON;
+
     CREATE TABLE IF NOT EXISTS rooms (
       code TEXT PRIMARY KEY,
       text TEXT NOT NULL DEFAULT '',

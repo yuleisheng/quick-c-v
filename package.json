@@ -17,15 +17,14 @@
     "quickcv": "bin/quickcv.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
-    "start": "node server.js",
+    "start": "node --no-warnings server.js",
     "urls": "node bin/quickcv.js urls",
-    "test": "node scripts/smoke-test.js"
+    "test": "node --no-warnings scripts/smoke-test.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.1",
     "express": "^4.21.2",
     "multer": "^2.1.1",
     "ws": "^8.18.0"
