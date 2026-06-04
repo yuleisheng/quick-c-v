@@ -2,9 +2,9 @@
 
 const fs = require("fs");
 const path = require("path");
+const { DEFAULT_PORT, parsePortArgs, parsePortValue } = require("../lib/config");
 const { getAppUrls } = require("../lib/network");
 
-const DEFAULT_PORT = 3000;
 const SERVER_STATE_PATH = path.join(__dirname, "..", "data", "server.json");
 
 function readLastPort() {
@@ -17,21 +17,7 @@ function readLastPort() {
 }
 
 function parsePort(args) {
-  const portFlag = args.find((arg) => arg.startsWith("--port="));
-  if (portFlag) {
-    return Number(portFlag.slice("--port=".length));
-  }
-
-  const portIndex = args.indexOf("--port");
-  if (portIndex !== -1) {
-    return Number(args[portIndex + 1]);
-  }
-
-  if (process.env.PORT) {
-    return Number(process.env.PORT);
-  }
-
-  return readLastPort() || DEFAULT_PORT;
+  return parsePortArgs(args) || parsePortValue(process.env.PORT) || readLastPort() || DEFAULT_PORT;
 }
 
 function printHelp() {
@@ -60,9 +46,11 @@ function main() {
     return;
   }
 
-  const port = parsePort(args);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    console.error("Port must be a number from 1 to 65535.");
+  let port;
+  try {
+    port = parsePort(args);
+  } catch (error) {
+    console.error(error.message);
     process.exitCode = 1;
     return;
   }

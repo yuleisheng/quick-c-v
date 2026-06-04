@@ -30,9 +30,9 @@ npm start
 The server prints URLs like:
 
 ```txt
-Quick C V is running at http://localhost:3000
+Quick C V is running at http://localhost:4785
 Open this on other devices on the same network:
-  http://192.168.1.42:3000
+  http://192.168.1.42:4785
 ```
 
 Open the LAN URL on phones, tablets, or other computers connected to the same network.
@@ -43,13 +43,19 @@ Open the LAN URL on phones, tablets, or other computers connected to the same ne
 npm start
 ```
 
-Start the local server.
+Start the local server. By default, Quick C V listens on port `4785`.
+
+```sh
+npm start -- --port 3001
+```
+
+Start on a specific port. `PORT=3001 npm start` also works.
 
 ```sh
 npm run urls
 ```
 
-Print localhost and LAN URLs again. The command uses the last port the server started on.
+Print localhost and LAN URLs again. The command uses the last port the server started on, then falls back to `4785`.
 
 ```sh
 npm test
@@ -125,10 +131,10 @@ If another device cannot open the LAN URL:
 - Try the `192.168.x.x` URL first if multiple URLs are printed.
 - Allow incoming connections for Node if macOS asks.
 - Temporarily disable VPNs or network filters that block local traffic.
-- Use another port if `3000` is busy:
+- Use another port if the default is busy:
 
 ```sh
-PORT=3001 npm start
+npm start -- --port 3001
 npm run urls
 ```
 

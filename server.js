@@ -6,9 +6,9 @@ const express = require("express");
 const multer = require("multer");
 const { DatabaseSync } = require("node:sqlite");
 const { WebSocket, WebSocketServer } = require("ws");
+const { DEFAULT_PORT, parsePortArgs, parsePortValue } = require("./lib/config");
 const { getLanUrls } = require("./lib/network");
 
-const DEFAULT_PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const MAX_TEXT_BYTES = 512 * 1024;
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -358,14 +358,22 @@ function createApp(options = {}) {
 }
 
 if (require.main === module) {
-  const { server } = createApp();
-  server.listen(DEFAULT_PORT, HOST, () => {
-    const address = server.address();
-    const port = typeof address === "object" && address ? address.port : DEFAULT_PORT;
-    writeServerState(port);
+  let port;
+  try {
+    port = parsePortArgs(process.argv.slice(2)) || parsePortValue(process.env.PORT) || DEFAULT_PORT;
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
 
-    console.log(`Quick C V is running at http://localhost:${port}`);
-    const lanUrls = getLanUrls(port);
+  const { server } = createApp();
+  server.listen(port, HOST, () => {
+    const address = server.address();
+    const actualPort = typeof address === "object" && address ? address.port : port;
+    writeServerState(actualPort);
+
+    console.log(`Quick C V is running at http://localhost:${actualPort}`);
+    const lanUrls = getLanUrls(actualPort);
     if (lanUrls.length) {
       console.log("Open this on other devices on the same network:");
       for (const url of lanUrls) {
