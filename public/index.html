@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Quick C V</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="join-view" id="joinView" aria-labelledby="joinTitle">
+        <div class="brand">
+          <span>Quick C V</span>
+        </div>
+        <h1 id="joinTitle">Instantly sync between devices</h1>
+        <form class="join-form" id="joinForm">
+          <label for="codeInput">Channel Passcode</label>
+          <div class="join-row">
+            <input id="codeInput" name="code" type="text" inputmode="latin" autocomplete="off" maxlength="32" placeholder="TEAM42" required>
+            <button type="submit">Join</button>
+          </div>
+          <p class="hint">Use the same passcode on every device.</p>
+          <p class="error" id="joinError" role="alert"></p>
+        </form>
+      </section>
+
+      <section class="editor-view" id="editorView" aria-label="Shared text editor" hidden>
+        <header class="editor-bar">
+          <div class="status-slot">
+            <span class="status" id="status">Connecting</span>
+          </div>
+          <div class="passcode-control">
+            <button class="icon-button" id="passcodeButton" type="button" aria-label="Show passcode" aria-expanded="false" title="Show passcode">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M14.5 7.5a5.5 5.5 0 1 0-3.1 5l2.1 2.1h2v2h2v2h3v-3l-5-5a5.5 5.5 0 0 0-1-3.1Z" />
+                <circle cx="8.5" cy="7.5" r="1" />
+              </svg>
+            </button>
+            <div class="passcode-popover" id="passcodePopover" hidden>
+              <span>Channel Passcode</span>
+              <strong id="roomLabel"></strong>
+            </div>
+          </div>
+          <div class="bar-actions">
+            <button class="ghost-button" id="uploadButton" type="button">Add media</button>
+            <input class="file-input" id="mediaInput" type="file" accept="image/*,video/*">
+            <button class="ghost-button" id="leaveButton" type="button">Leave</button>
+          </div>
+        </header>
+        <textarea id="textEditor" spellcheck="true" placeholder="Type here. Everyone using the same passcode sees it instantly"></textarea>
+        <section class="media-panel" id="mediaPanel" aria-label="Synced media" hidden>
+          <div class="media-grid" id="mediaGrid"></div>
+        </section>
+        <footer class="editor-footer">
+          <span id="savedAt">Not saved yet</span>
+          <span id="uploadStatus"></span>
+          <span id="charCount">0 chars</span>
+        </footer>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

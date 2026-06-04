@@ -1,0 +1,25 @@
+{
+  "name": "quick-c-v",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dead simple local-network text, image, and video sync.",
+  "license": "MIT",
+  "main": "server.js",
+  "bin": {
+    "quickcv": "bin/quickcv.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "urls": "node bin/quickcv.js urls",
+    "test": "node scripts/smoke-test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2",
+    "multer": "^2.1.1",
+    "ws": "^8.18.0"
+  }
+}
