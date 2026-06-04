@@ -57,6 +57,15 @@ function mediaUrlFor(fileName) {
   return `/uploads/${encodeURIComponent(fileName)}`;
 }
 
+function uploadedFilePath(uploadDir, fileName) {
+  const root = path.resolve(uploadDir);
+  const filePath = path.resolve(root, fileName);
+  if (!filePath.startsWith(`${root}${path.sep}`)) {
+    throw new Error("Invalid upload path.");
+  }
+  return filePath;
+}
+
 function createStore(dbPath) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
@@ -96,6 +105,20 @@ function createStore(dbPath) {
     INSERT INTO media (id, code, file_name, original_name, mime_type, kind, size, created_at)
     VALUES (@id, @code, @fileName, @originalName, @mimeType, @kind, @size, @createdAt)
   `);
+  const findMedia = db.prepare(`
+    SELECT
+      id,
+      code,
+      file_name AS fileName,
+      original_name AS originalName,
+      mime_type AS mimeType,
+      kind,
+      size,
+      created_at AS createdAt
+    FROM media
+    WHERE code = ? AND id = ?
+  `);
+  const deleteMedia = db.prepare("DELETE FROM media WHERE code = ? AND id = ?");
   const listMedia = db.prepare(`
     SELECT
       id,
@@ -149,6 +172,27 @@ function createStore(dbPath) {
       };
       insertMedia.run(item);
       return this.getRoom(code);
+    },
+    removeMedia(code, id) {
+      const media = findMedia.get(code, id);
+      if (!media) {
+        return { room: this.getRoom(code), media: undefined };
+      }
+
+      deleteMedia.run(code, id);
+      return {
+        room: this.getRoom(code),
+        media: {
+          id: media.id,
+          type: media.kind,
+          url: mediaUrlFor(media.fileName),
+          fileName: media.fileName,
+          name: media.originalName,
+          mimeType: media.mimeType,
+          size: media.size,
+          createdAt: media.createdAt
+        }
+      };
     },
     close() {
       db.close();
@@ -262,6 +306,23 @@ function createApp(options = {}) {
       updatedAt: room.updatedAt
     });
     res.status(201).json(room.media[room.media.length - 1]);
+  });
+
+  app.delete("/api/room/:code/media/:id", validatePasscodeParam, (req, res) => {
+    const removed = store.removeMedia(req.roomCode, req.params.id);
+    if (!removed.media) {
+      res.status(404).json({ error: "Media not found." });
+      return;
+    }
+
+    fs.rm(uploadedFilePath(uploadDir, removed.media.fileName), { force: true }, () => {});
+    broadcast(req.roomCode, {
+      type: "snapshot",
+      text: removed.room.text,
+      media: removed.room.media,
+      updatedAt: removed.room.updatedAt
+    });
+    res.status(204).end();
   });
 
   const wss = new WebSocketServer({

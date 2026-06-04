@@ -56,6 +56,18 @@ function withTimeout(promise, message) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+async function waitForFileMissing(filePath) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 2000) {
+    if (!fs.existsSync(filePath)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error(`Expected ${filePath} to be removed.`);
+}
+
 async function main() {
   const port = await listen();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -123,6 +135,26 @@ async function main() {
     throw new Error("WebSocket clients did not receive synced video metadata.");
   }
 
+  const deleteReceivedByB = nextSnapshotWhere(wsB, (message) => message.media && message.media.length === 1);
+  const uploadFileName = path.basename(new URL(upload.url, baseUrl).pathname);
+  const uploadPath = path.join(uploadDir, uploadFileName);
+  if (!fs.existsSync(uploadPath)) {
+    throw new Error("Uploaded image file was not written to disk.");
+  }
+
+  const deletion = await fetch(`${baseUrl}/api/room/ABC123/media/${upload.id}`, {
+    method: "DELETE"
+  });
+  if (deletion.status !== 204) {
+    throw new Error("Media deletion did not return 204.");
+  }
+
+  const deleteSnapshot = await deleteReceivedByB;
+  if (deleteSnapshot.media.length !== 1 || deleteSnapshot.media[0].name !== "clip.mp4") {
+    throw new Error("WebSocket clients did not receive synced media deletion.");
+  }
+  await waitForFileMissing(uploadPath);
+
   wsA.terminate();
   wsB.terminate();
   sockets.delete(wsA);
@@ -137,7 +169,7 @@ async function main() {
   if (restored.text !== "hello from smoke test") {
     throw new Error("Room text was not persisted across server restarts.");
   }
-  if (!restored.media || restored.media.length !== 2 || restored.media[0].name !== "pixel.png" || restored.media[1].name !== "clip.mp4") {
+  if (!restored.media || restored.media.length !== 1 || restored.media[0].name !== "clip.mp4") {
     throw new Error("Media metadata was not persisted across server restarts.");
   }
   await new Promise((resolve) => persisted.server.close(resolve));

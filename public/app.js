@@ -16,6 +16,9 @@ const mediaInput = document.querySelector("#mediaInput");
 const mediaPanel = document.querySelector("#mediaPanel");
 const mediaGrid = document.querySelector("#mediaGrid");
 const uploadStatus = document.querySelector("#uploadStatus");
+const previewDialog = document.querySelector("#previewDialog");
+const previewBody = document.querySelector("#previewBody");
+const previewCloseButton = document.querySelector("#previewCloseButton");
 
 const CODE_REGEX = /^[A-Z0-9]{1,32}$/;
 let socket;
@@ -83,6 +86,68 @@ function setUploadStatus(message = "") {
   uploadStatus.textContent = message;
 }
 
+function iconSvg(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("viewBox", "0 0 24 24");
+
+  const paths = {
+    download: ["M12 3v11", "M7 9l5 5 5-5", "M5 21h14"],
+    remove: ["M18 6 6 18", "M6 6l12 12"]
+  };
+
+  for (const data of paths[name] || []) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", data);
+    svg.append(path);
+  }
+
+  return svg;
+}
+
+function openPreview(item) {
+  previewBody.replaceChildren();
+
+  const preview = document.createElement(item.type === "video" ? "video" : "img");
+  preview.src = item.url;
+  preview.className = "preview-media";
+
+  if (item.type === "video") {
+    preview.controls = true;
+    preview.autoplay = true;
+  } else {
+    preview.alt = item.name || "Synced image";
+  }
+
+  previewBody.append(preview);
+  previewDialog.showModal();
+}
+
+function closePreview() {
+  previewDialog.close();
+  previewBody.replaceChildren();
+}
+
+async function deleteMedia(item) {
+  setUploadStatus("Removing");
+
+  try {
+    const response = await fetch(`/api/room/${encodeURIComponent(roomCode)}/media/${encodeURIComponent(item.id)}`, {
+      method: "DELETE"
+    });
+
+    if (!response.ok) {
+      const payload = await response.json();
+      throw new Error(payload.error || "Could not remove media.");
+    }
+
+    renderMedia(mediaItems.filter((mediaItem) => mediaItem.id !== item.id));
+    setUploadStatus("Removed");
+  } catch (error) {
+    setUploadStatus(error.message);
+  }
+}
+
 function renderMedia(items = []) {
   mediaItems = items;
   mediaGrid.replaceChildren();
@@ -92,17 +157,41 @@ function renderMedia(items = []) {
     const card = document.createElement("article");
     card.className = "media-item";
 
+    const previewButton = document.createElement("button");
+    previewButton.className = "media-open";
+    previewButton.type = "button";
+    previewButton.setAttribute("aria-label", `Preview ${item.name || "media"}`);
+
     const preview = document.createElement(item.type === "video" ? "video" : "img");
     preview.src = item.url;
     preview.className = "media-preview";
 
     if (item.type === "video") {
-      preview.controls = true;
       preview.preload = "metadata";
     } else {
       preview.alt = item.name || "Synced image";
       preview.loading = "lazy";
     }
+
+    const actions = document.createElement("div");
+    actions.className = "media-actions";
+
+    const download = document.createElement("a");
+    download.className = "media-action";
+    download.href = item.url;
+    download.download = item.name || "quickcv-media";
+    download.setAttribute("aria-label", `Download ${item.name || "media"}`);
+    download.title = "Download";
+    download.append(iconSvg("download"));
+
+    const remove = document.createElement("button");
+    remove.className = "media-action";
+    remove.type = "button";
+    remove.setAttribute("aria-label", `Remove ${item.name || "media"}`);
+    remove.title = "Remove";
+    remove.append(iconSvg("remove"));
+
+    actions.append(download, remove);
 
     const meta = document.createElement("div");
     meta.className = "media-meta";
@@ -115,7 +204,16 @@ function renderMedia(items = []) {
     size.textContent = formatBytes(item.size);
 
     meta.append(name, size);
-    card.append(preview, meta);
+    previewButton.append(preview, meta);
+    card.append(previewButton, actions);
+    previewButton.addEventListener("click", () => openPreview(item));
+    download.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    remove.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteMedia(item);
+    });
     mediaGrid.append(card);
   }
 
@@ -273,6 +371,18 @@ document.addEventListener("keydown", (event) => {
     passcodePopover.hidden = true;
     passcodeButton.setAttribute("aria-expanded", "false");
   }
+});
+
+previewCloseButton.addEventListener("click", closePreview);
+
+previewDialog.addEventListener("click", (event) => {
+  if (event.target === previewDialog) {
+    closePreview();
+  }
+});
+
+previewDialog.addEventListener("close", () => {
+  previewBody.replaceChildren();
 });
 
 mediaInput.addEventListener("change", async () => {
