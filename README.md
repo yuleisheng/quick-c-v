@@ -9,14 +9,7 @@ Run one tiny server on a Mac, open its LAN URL on every device, enter the same c
 - Node.js 24 or newer
 - npm
 
-## Features
-
-- Instant shared text editing over WebSockets
-- Image and video uploads synced to every connected device in the same channel
-- SQLite persistence for text and media metadata
-- Local file storage for uploads
-- One-command URL discovery with `quickcv urls`
-- Code-only access model: anyone with the passcode can view and edit
+Quick C V uses Node's built-in SQLite support, so it does not need a native SQLite npm addon.
 
 ## Quick Start
 
@@ -27,7 +20,7 @@ npm install
 npm start
 ```
 
-The server prints URLs like:
+By default, the server listens on port `4785` and prints URLs like:
 
 ```txt
 Quick C V is running at http://localhost:4785
@@ -37,33 +30,27 @@ Open this on other devices on the same network:
 
 Open the LAN URL on phones, tablets, or other computers connected to the same network.
 
-## Commands
-
-```sh
-npm start
-```
-
-Start the local server. By default, Quick C V listens on port `4785`.
+## Run On A Specific Port
 
 ```sh
 npm start -- --port 3001
 ```
 
-Start on a specific port. `PORT=3001 npm start` also works.
+Environment variables work too:
+
+```sh
+PORT=3001 npm start
+```
+
+## Print URLs Again
 
 ```sh
 npm run urls
 ```
 
-Print localhost and LAN URLs again. The command uses the last port the server started on, then falls back to `4785`.
+The URL command uses the last port the server started on. If the app has not started yet, it falls back to `4785`.
 
-```sh
-npm test
-```
-
-Run the smoke test for passcode validation, text sync, image upload, video upload, WebSocket broadcast, and restart persistence.
-
-If you link the package locally, you can call the URL helper directly:
+After linking the package locally, the helper is available as `quickcv`:
 
 ```sh
 npm link
@@ -71,14 +58,45 @@ quickcv urls
 quickcv urls --port 3001
 ```
 
-## How To Use
+## Use
 
 1. Start the server on one Mac.
-2. Open the printed LAN URL on every device.
+2. Open the printed LAN URL on each device.
 3. Enter the same channel passcode on every device.
-4. Type text or add media.
+4. Type text or add images/videos.
 
 Everything is scoped to the passcode. Joining a new passcode creates that channel automatically.
+
+## Run On Another MacBook
+
+Fresh clone:
+
+```sh
+git clone https://github.com/yuleisheng/quick-c-v.git
+cd quick-c-v
+npm install
+npm start
+```
+
+Existing checkout:
+
+```sh
+cd quick-c-v
+git pull
+npm install
+npm start
+```
+
+Do not copy `node_modules` between machines. Re-run `npm install` on each Mac.
+
+## Features
+
+- Instant shared text editing over WebSockets
+- Image and video uploads synced to every connected device in the same channel
+- SQLite persistence for text and media metadata
+- Local file storage for uploaded media
+- One-command URL discovery with `npm run urls` or `quickcv urls`
+- Code-only access model: anyone with the passcode can view and edit
 
 ## Storage
 
@@ -94,21 +112,9 @@ The `data/` directory is ignored by Git.
 
 Uploads are limited to `100 MB` per file.
 
-Supported image types:
+Supported image types: AVIF, GIF, HEIC, HEIF, JPEG, PNG, WebP.
 
-- AVIF
-- GIF
-- HEIC / HEIF
-- JPEG
-- PNG
-- WebP
-
-Supported video types:
-
-- MP4
-- MPEG
-- MOV / QuickTime
-- WebM
+Supported video types: MP4, MPEG, MOV / QuickTime, WebM.
 
 ## Security Model
 
@@ -137,6 +143,22 @@ If another device cannot open the LAN URL:
 npm start -- --port 3001
 npm run urls
 ```
+
+If startup fails after moving the folder between machines:
+
+```sh
+rm -rf node_modules
+npm install
+npm start
+```
+
+## Test
+
+```sh
+npm test
+```
+
+The smoke test covers passcode validation, text sync, image upload, video upload, WebSocket broadcast, and restart persistence.
 
 ## License
 
