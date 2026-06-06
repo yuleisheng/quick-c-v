@@ -24,7 +24,7 @@ const CODE_REGEX = /^[A-Z0-9]{1,32}$/;
 let socket;
 let roomCode = "";
 let reconnectTimer;
-let suppressNextSend = false;
+let dragDepth = 0;
 let mediaItems = [];
 
 function normalizeCode(value) {
@@ -86,6 +86,23 @@ function setUploadStatus(message = "") {
   uploadStatus.textContent = message;
 }
 
+function isMediaFile(file) {
+  return Boolean(file) && (file.type.startsWith("image/") || file.type.startsWith("video/"));
+}
+
+function hasDraggedFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+
+function setDragActive(isActive) {
+  editorView.classList.toggle("is-dragging", isActive);
+}
+
+function resetDragState() {
+  dragDepth = 0;
+  setDragActive(false);
+}
+
 function iconSvg(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("aria-hidden", "true");
@@ -142,9 +159,59 @@ async function deleteMedia(item) {
     }
 
     renderMedia(mediaItems.filter((mediaItem) => mediaItem.id !== item.id));
-    setUploadStatus("Removed");
+    setUploadStatus("");
   } catch (error) {
     setUploadStatus(error.message);
+  }
+}
+
+async function uploadMediaFile(code, file) {
+  const form = new FormData();
+  form.set("file", file);
+
+  const response = await fetch(`/api/room/${encodeURIComponent(code)}/media`, {
+    method: "POST",
+    body: form
+  });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload.error || "Upload failed.");
+  }
+
+  return payload;
+}
+
+async function uploadMediaFiles(files) {
+  const code = roomCode;
+  const selectedFiles = Array.from(files || []);
+  if (!selectedFiles.length || !code) {
+    return;
+  }
+
+  if (!selectedFiles.every(isMediaFile)) {
+    setUploadStatus("Images and videos only");
+    return;
+  }
+
+  uploadButton.disabled = true;
+
+  try {
+    for (const [index, file] of selectedFiles.entries()) {
+      setUploadStatus(selectedFiles.length > 1 ? `Uploading ${index + 1}/${selectedFiles.length}` : "Uploading");
+      const payload = await uploadMediaFile(code, file);
+      if (code === roomCode) {
+        renderMedia([...mediaItems.filter((item) => item.id !== payload.id), payload]);
+      }
+    }
+
+    if (code === roomCode) {
+      setUploadStatus("");
+    }
+  } catch (error) {
+    setUploadStatus(error.message);
+  } finally {
+    uploadButton.disabled = false;
   }
 }
 
@@ -225,6 +292,7 @@ function showJoin() {
   if (socket) {
     socket.close();
   }
+  resetDragState();
   roomCode = "";
   renderMedia([]);
   setUploadStatus("");
@@ -270,7 +338,6 @@ function connectSocket() {
     const message = JSON.parse(event.data);
     if (message.type === "snapshot") {
       if (textEditor.value !== message.text) {
-        suppressNextSend = true;
         textEditor.value = message.text;
         updateCount();
       }
@@ -299,11 +366,6 @@ function connectSocket() {
 }
 
 function sendUpdate() {
-  if (suppressNextSend) {
-    suppressNextSend = false;
-    return;
-  }
-
   updateCount();
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     setStatus("Offline", "offline");
@@ -385,43 +447,65 @@ previewDialog.addEventListener("close", () => {
   previewBody.replaceChildren();
 });
 
-mediaInput.addEventListener("change", async () => {
-  const file = mediaInput.files[0];
+mediaInput.addEventListener("change", () => {
+  const files = Array.from(mediaInput.files || []);
   mediaInput.value = "";
   setUploadStatus("");
+  uploadMediaFiles(files);
+});
 
-  if (!file || !roomCode) {
+editorView.addEventListener("dragenter", (event) => {
+  if (!roomCode || !hasDraggedFiles(event)) {
     return;
   }
 
-  if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
-    setUploadStatus("Images and videos only");
+  event.preventDefault();
+  dragDepth += 1;
+  setDragActive(true);
+});
+
+editorView.addEventListener("dragover", (event) => {
+  if (!roomCode || !hasDraggedFiles(event)) {
     return;
   }
 
-  uploadButton.disabled = true;
-  setUploadStatus("Uploading");
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
 
-  try {
-    const form = new FormData();
-    form.set("file", file);
+editorView.addEventListener("dragleave", (event) => {
+  if (!hasDraggedFiles(event)) {
+    return;
+  }
 
-    const response = await fetch(`/api/room/${encodeURIComponent(roomCode)}/media`, {
-      method: "POST",
-      body: form
-    });
-    const payload = await response.json();
+  dragDepth -= 1;
+  if (dragDepth <= 0) {
+    resetDragState();
+  }
+});
 
-    if (!response.ok) {
-      throw new Error(payload.error || "Upload failed.");
-    }
+editorView.addEventListener("drop", (event) => {
+  if (!roomCode || !hasDraggedFiles(event)) {
+    return;
+  }
 
-    renderMedia([...mediaItems.filter((item) => item.id !== payload.id), payload]);
-    setUploadStatus("Uploaded");
-  } catch (error) {
-    setUploadStatus(error.message);
-  } finally {
-    uploadButton.disabled = false;
+  event.preventDefault();
+  const files = Array.from(event.dataTransfer.files || []);
+  resetDragState();
+  setUploadStatus("");
+  uploadMediaFiles(files);
+});
+
+document.addEventListener("dragover", (event) => {
+  if (hasDraggedFiles(event)) {
+    event.preventDefault();
+  }
+});
+
+document.addEventListener("drop", (event) => {
+  if (hasDraggedFiles(event)) {
+    event.preventDefault();
+    resetDragState();
   }
 });
 

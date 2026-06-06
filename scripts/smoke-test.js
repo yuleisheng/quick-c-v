@@ -99,6 +99,13 @@ async function main() {
     throw new Error("WebSocket clients did not receive the synced update.");
   }
 
+  const deletionReceivedByA = nextSnapshotWhere(wsA, (message) => message.text === "");
+  wsB.send(JSON.stringify({ type: "update", text: "" }));
+  const deletionSnapshot = await deletionReceivedByA;
+  if (deletionSnapshot.text !== "") {
+    throw new Error("WebSocket clients did not receive the synced text deletion.");
+  }
+
   const mediaReceivedByB = nextSnapshotWhere(wsB, (message) => message.media && message.media.length === 1);
   const tinyPng = new Blob([
     Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64")
@@ -166,7 +173,7 @@ async function main() {
     persisted.server.listen(0, "127.0.0.1", () => resolve(persisted.server.address().port));
   });
   const restored = await fetch(`http://127.0.0.1:${secondPort}/api/room/ABC123`).then((response) => response.json());
-  if (restored.text !== "hello from smoke test") {
+  if (restored.text !== "") {
     throw new Error("Room text was not persisted across server restarts.");
   }
   if (!restored.media || restored.media.length !== 1 || restored.media[0].name !== "clip.mp4") {

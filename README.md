@@ -63,7 +63,7 @@ quickcv urls --port 3001
 1. Start the server on one Mac.
 2. Open the printed LAN URL on each device.
 3. Enter the same channel passcode on every device.
-4. Type text or add images/videos.
+4. Type text or add/drag images/videos.
 5. Click an asset to preview it, or hover over it to download/remove it.
 
 Everything is scoped to the passcode. Joining a new passcode creates that channel automatically.
@@ -93,7 +93,7 @@ Do not copy `node_modules` between machines. Re-run `npm install` on each Mac.
 ## Features
 
 - Instant shared text editing over WebSockets
-- Image and video uploads synced to every connected device in the same channel
+- Image and video uploads via file picker or drag and drop, synced to every connected device in the same channel
 - Image/video preview, download, and removal from the media shelf
 - SQLite persistence for text and media metadata
 - Local file storage for uploaded media

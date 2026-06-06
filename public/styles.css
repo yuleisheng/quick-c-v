@@ -163,6 +163,16 @@ textarea:focus {
   box-shadow: 0 20px 45px rgba(40, 54, 45, 0.12);
 }
 
+.editor-view.is-dragging {
+  border-color: var(--accent);
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.editor-view.is-dragging textarea {
+  background: #f5fbf7;
+}
+
 .editor-bar {
   position: relative;
   display: grid;
