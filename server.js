@@ -88,6 +88,20 @@ function mediaUrlFor(fileName) {
   return `/uploads/${encodeURIComponent(fileName)}`;
 }
 
+function isLoopbackAddress(address) {
+  const value = String(address || "").toLowerCase();
+
+  if (value === "::1" || value.startsWith("127.")) {
+    return true;
+  }
+
+  if (value.startsWith("::ffff:")) {
+    return isLoopbackAddress(value.slice(7));
+  }
+
+  return false;
+}
+
 function uploadedFilePath(uploadDir, fileName) {
   const root = path.resolve(uploadDir);
   const filePath = path.resolve(root, fileName);
@@ -127,10 +141,23 @@ function createStore(dbPath) {
 
   const findRoom = db.prepare("SELECT code, text, updated_at AS updatedAt FROM rooms WHERE code = ?");
   const insertRoom = db.prepare("INSERT INTO rooms (code, text, updated_at) VALUES (?, '', ?)");
+  const touchRoom = db.prepare("UPDATE rooms SET updated_at = ? WHERE code = ?");
   const saveRoom = db.prepare(`
     INSERT INTO rooms (code, text, updated_at)
     VALUES (?, ?, ?)
     ON CONFLICT(code) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at
+  `);
+  const listRooms = db.prepare(`
+    SELECT
+      rooms.code,
+      rooms.text,
+      rooms.updated_at AS updatedAt,
+      COUNT(media.id) AS mediaCount,
+      COALESCE(SUM(media.size), 0) AS mediaSize
+    FROM rooms
+    LEFT JOIN media ON media.code = rooms.code
+    GROUP BY rooms.code, rooms.text, rooms.updated_at
+    ORDER BY rooms.updated_at DESC, rooms.code ASC
   `);
   const insertMedia = db.prepare(`
     INSERT INTO media (id, code, file_name, original_name, mime_type, kind, size, created_at)
@@ -184,6 +211,15 @@ function createStore(dbPath) {
         }))
       };
     },
+    listRooms() {
+      return listRooms.all().map((room) => ({
+        code: room.code,
+        updatedAt: room.updatedAt,
+        textLength: room.text.length,
+        mediaCount: Number(room.mediaCount) || 0,
+        mediaSize: Number(room.mediaSize) || 0
+      }));
+    },
     saveRoom(code, text) {
       const updatedAt = nowIso();
       saveRoom.run(code, text, updatedAt);
@@ -191,6 +227,7 @@ function createStore(dbPath) {
     },
     addMedia(code, file) {
       this.getRoom(code);
+      const createdAt = nowIso();
       const item = {
         id: file.generatedId,
         code,
@@ -199,9 +236,10 @@ function createStore(dbPath) {
         mimeType: storedMimeTypeFor(file),
         kind: fileTypeFor(file),
         size: file.size,
-        createdAt: nowIso()
+        createdAt
       };
       insertMedia.run(item);
+      touchRoom.run(createdAt, code);
       return this.getRoom(code);
     },
     removeMedia(code, id) {
@@ -211,6 +249,7 @@ function createStore(dbPath) {
       }
 
       deleteMedia.run(code, id);
+      touchRoom.run(nowIso(), code);
       return {
         room: this.getRoom(code),
         media: {
@@ -247,6 +286,15 @@ function validatePasscodeParam(req, res, next) {
   }
 
   req.roomCode = code;
+  next();
+}
+
+function requireHostRequest(req, res, next) {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    res.status(403).json({ error: "Channel board is only available on the host machine." });
+    return;
+  }
+
   next();
 }
 
@@ -317,6 +365,15 @@ function createApp(options = {}) {
     }
   }));
   app.use(express.static(publicDir));
+
+  app.get("/api/channels", requireHostRequest, (req, res) => {
+    res.json({
+      channels: store.listRooms().map((room) => ({
+        ...room,
+        connectedCount: rooms.get(room.code)?.size || 0
+      }))
+    });
+  });
 
   app.get("/api/room/:code", validatePasscodeParam, (req, res) => {
     const room = store.getRoom(req.roomCode);

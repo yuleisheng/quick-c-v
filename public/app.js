@@ -3,6 +3,9 @@ const editorView = document.querySelector("#editorView");
 const joinForm = document.querySelector("#joinForm");
 const codeInput = document.querySelector("#codeInput");
 const joinError = document.querySelector("#joinError");
+const hostBoard = document.querySelector("#hostBoard");
+const channelList = document.querySelector("#channelList");
+const hostBoardRefresh = document.querySelector("#hostBoardRefresh");
 const roomLabel = document.querySelector("#roomLabel");
 const statusPill = document.querySelector("#status");
 const passcodeButton = document.querySelector("#passcodeButton");
@@ -24,6 +27,7 @@ const CODE_REGEX = /^[A-Z0-9]{1,32}$/;
 let socket;
 let roomCode = "";
 let reconnectTimer;
+let channelRefreshTimer;
 let dragDepth = 0;
 let mediaItems = [];
 
@@ -85,6 +89,42 @@ function formatBytes(bytes) {
   }
 
   return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatChannelUpdatedAt(value) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Updated";
+  }
+
+  return `Updated ${date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  })}`;
+}
+
+function channelSummary(channel) {
+  const textLength = Number(channel.textLength) || 0;
+  const mediaCount = Number(channel.mediaCount) || 0;
+  const mediaSize = Number(channel.mediaSize) || 0;
+  const parts = [];
+
+  if (textLength > 0) {
+    parts.push(`${textLength.toLocaleString()} ${textLength === 1 ? "char" : "chars"}`);
+  }
+
+  if (mediaCount > 0) {
+    parts.push(`${mediaCount.toLocaleString()} ${mediaCount === 1 ? "file" : "files"}`);
+  }
+
+  if (mediaSize > 0) {
+    parts.push(formatBytes(mediaSize));
+  }
+
+  return parts.join(" · ") || "Empty";
 }
 
 function setUploadStatus(message = "") {
@@ -322,6 +362,86 @@ function renderMedia(items = []) {
   updateCount();
 }
 
+function renderChannels(channels = []) {
+  channelList.replaceChildren();
+  hostBoard.hidden = false;
+
+  if (channels.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "channel-empty";
+    empty.textContent = "No channels yet";
+    channelList.append(empty);
+    return;
+  }
+
+  for (const channel of channels) {
+    const row = document.createElement("button");
+    row.className = "channel-row";
+    row.type = "button";
+
+    const details = document.createElement("span");
+    details.className = "channel-details";
+
+    const code = document.createElement("strong");
+    code.className = "channel-code";
+    code.textContent = channel.code;
+
+    const meta = document.createElement("span");
+    meta.className = "channel-meta";
+    meta.textContent = `${formatChannelUpdatedAt(channel.updatedAt)} · ${channelSummary(channel)}`;
+
+    const connectedCount = Number(channel.connectedCount) || 0;
+    const badge = document.createElement("span");
+    badge.className = connectedCount > 0 ? "channel-badge is-live" : "channel-badge";
+    badge.textContent = connectedCount > 0
+      ? `${connectedCount.toLocaleString()} live`
+      : "Idle";
+
+    details.append(code, meta);
+    row.append(details, badge);
+    row.addEventListener("click", () => {
+      codeInput.value = channel.code;
+      joinForm.requestSubmit();
+    });
+    channelList.append(row);
+  }
+}
+
+function stopChannelBoard() {
+  clearInterval(channelRefreshTimer);
+}
+
+async function loadChannels() {
+  if (joinView.hidden) {
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/channels", { cache: "no-store" });
+
+    if (response.status === 403) {
+      hostBoard.hidden = true;
+      stopChannelBoard();
+      return;
+    }
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Could not load channels.");
+    }
+
+    renderChannels(payload.channels || []);
+  } catch {
+    hostBoard.hidden = true;
+  }
+}
+
+function startChannelBoard() {
+  stopChannelBoard();
+  loadChannels();
+  channelRefreshTimer = setInterval(loadChannels, 5000);
+}
+
 function showJoin() {
   clearTimeout(reconnectTimer);
   if (socket) {
@@ -337,9 +457,11 @@ function showJoin() {
   joinView.hidden = false;
   joinError.textContent = "";
   codeInput.focus();
+  startChannelBoard();
 }
 
 function showEditor(code) {
+  stopChannelBoard();
   joinView.hidden = true;
   editorView.hidden = false;
   roomLabel.textContent = code;
@@ -447,6 +569,8 @@ textEditor.addEventListener("input", sendUpdate);
 uploadButton.addEventListener("click", () => {
   mediaInput.click();
 });
+
+hostBoardRefresh.addEventListener("click", loadChannels);
 
 passcodeButton.addEventListener("click", () => {
   const isHidden = passcodePopover.hidden;
@@ -567,5 +691,6 @@ if (CODE_REGEX.test(hashCode)) {
   codeInput.value = hashCode;
   joinForm.requestSubmit();
 } else {
+  startChannelBoard();
   codeInput.focus();
 }

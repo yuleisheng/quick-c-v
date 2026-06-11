@@ -82,6 +82,12 @@ async function main() {
     throw new Error("Room fetch did not normalize/create the room.");
   }
 
+  const initialChannels = await fetch(`${baseUrl}/api/channels`).then((response) => response.json());
+  const initialChannel = initialChannels.channels.find((channel) => channel.code === "ABC123");
+  if (!initialChannel || initialChannel.textLength !== 0 || initialChannel.mediaCount !== 0) {
+    throw new Error("Host channel board did not list the created room.");
+  }
+
   const wsA = new WebSocket(`ws://127.0.0.1:${port}/ws?code=ABC123`);
   const wsB = new WebSocket(`ws://127.0.0.1:${port}/ws?code=ABC123`);
   sockets.add(wsA);
@@ -161,6 +167,17 @@ async function main() {
   const dmgSnapshot = await dmgReceivedByB;
   if (dmgSnapshot.media[2].name !== "installer.dmg") {
     throw new Error("WebSocket clients did not receive synced DMG metadata.");
+  }
+
+  const channelsWithMedia = await fetch(`${baseUrl}/api/channels`).then((response) => response.json());
+  const channelWithMedia = channelsWithMedia.channels.find((channel) => channel.code === "ABC123");
+  if (
+    !channelWithMedia ||
+    channelWithMedia.mediaCount !== 3 ||
+    channelWithMedia.mediaSize <= 0 ||
+    channelWithMedia.connectedCount !== 2
+  ) {
+    throw new Error("Host channel board did not report media and live clients.");
   }
 
   const unsupportedForm = new FormData();

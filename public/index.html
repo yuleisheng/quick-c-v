@@ -22,6 +22,20 @@
           <p class="hint">Use the same passcode on every device.</p>
           <p class="error" id="joinError" role="alert"></p>
         </form>
+        <section class="host-board" id="hostBoard" aria-labelledby="hostBoardTitle" hidden>
+          <div class="host-board-header">
+            <h2 id="hostBoardTitle">Host Channels</h2>
+            <button class="icon-button host-board-refresh" id="hostBoardRefresh" type="button" aria-label="Refresh channels" title="Refresh channels">
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M21 12a9 9 0 0 1-15.5 6.3" />
+                <path d="M3 12a9 9 0 0 1 15.5-6.3" />
+                <path d="M18 2v4h-4" />
+                <path d="M6 22v-4h4" />
+              </svg>
+            </button>
+          </div>
+          <div class="channel-list" id="channelList"></div>
+        </section>
       </section>
 
       <section class="editor-view" id="editorView" aria-label="Shared text editor" hidden>
