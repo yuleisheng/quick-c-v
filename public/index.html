@@ -56,11 +56,15 @@
             </div>
           </div>
           <div class="bar-actions">
+            <button class="ghost-button" id="addTaskButton" type="button">Add task</button>
             <button class="ghost-button" id="uploadButton" type="button">Add files</button>
             <input class="file-input" id="mediaInput" type="file" accept="image/*,video/*,.dmg,application/x-apple-diskimage" multiple>
             <button class="ghost-button" id="leaveButton" type="button">Leave</button>
           </div>
         </header>
+        <section class="task-panel" id="taskPanel" aria-label="Tasks" hidden>
+          <div class="task-list" id="taskList"></div>
+        </section>
         <textarea id="textEditor" spellcheck="true" placeholder="Type here. Everyone using the same passcode sees it instantly"></textarea>
         <section class="media-panel" id="mediaPanel" aria-label="Synced files" hidden>
           <div class="media-grid" id="mediaGrid"></div>

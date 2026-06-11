@@ -2,12 +2,26 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const WebSocket = require("ws");
-const { createApp } = require("../server");
+const { createApp, isTaskCompletionOnlyUpdate } = require("../server");
 
 const dbPath = path.join(os.tmpdir(), `quick-c-v-test-${process.pid}.db`);
 const uploadDir = path.join(os.tmpdir(), `quick-c-v-test-uploads-${process.pid}`);
 const { server } = createApp({ dbPath, uploadDir });
 const sockets = new Set();
+
+const sampleTasks = [{ id: "task-1", text: "Buy milk", done: false }];
+if (!isTaskCompletionOnlyUpdate(sampleTasks, [{ id: "task-1", text: "Buy milk", done: true }])) {
+  throw new Error("Task completion-only updates should be allowed.");
+}
+if (isTaskCompletionOnlyUpdate(sampleTasks, [...sampleTasks, { id: "task-2", text: "Add me", done: false }])) {
+  throw new Error("Task additions should not be completion-only updates.");
+}
+if (isTaskCompletionOnlyUpdate(sampleTasks, [{ id: "task-1", text: "Rename task", done: false }])) {
+  throw new Error("Task edits should not be completion-only updates.");
+}
+if (isTaskCompletionOnlyUpdate(sampleTasks, [])) {
+  throw new Error("Task deletions should not be completion-only updates.");
+}
 
 function listen() {
   return new Promise((resolve) => {
@@ -100,13 +114,18 @@ async function main() {
   }
 
   const room = await fetch(`${baseUrl}/api/room/abc123`).then((response) => response.json());
-  if (room.code !== "ABC123" || room.text !== "") {
+  if (room.code !== "ABC123" || room.text !== "" || !Array.isArray(room.tasks) || room.tasks.length !== 0) {
     throw new Error("Room fetch did not normalize/create the room.");
   }
 
   const initialChannels = await fetch(`${baseUrl}/api/channels`).then((response) => response.json());
   const initialChannel = initialChannels.channels.find((channel) => channel.code === "ABC123");
-  if (!initialChannel || initialChannel.textLength !== 0 || initialChannel.mediaCount !== 0) {
+  if (
+    !initialChannel ||
+    initialChannel.textLength !== 0 ||
+    initialChannel.taskCount !== 0 ||
+    initialChannel.mediaCount !== 0
+  ) {
     throw new Error("Host channel board did not list the created room.");
   }
 
@@ -132,6 +151,25 @@ async function main() {
   const deletionSnapshot = await deletionReceivedByA;
   if (deletionSnapshot.text !== "") {
     throw new Error("WebSocket clients did not receive the synced text deletion.");
+  }
+
+  const tasksReceivedByB = nextSnapshotWhere(
+    wsB,
+    (message) => Array.isArray(message.tasks) && message.tasks.length === 1
+  );
+  wsA.send(JSON.stringify({
+    type: "tasksUpdate",
+    tasks: [{ id: "task-1", text: "Buy milk", done: true }]
+  }));
+
+  const taskSnapshot = await tasksReceivedByB;
+  if (
+    taskSnapshot.text !== "" ||
+    taskSnapshot.tasks[0].id !== "task-1" ||
+    taskSnapshot.tasks[0].text !== "Buy milk" ||
+    taskSnapshot.tasks[0].done !== true
+  ) {
+    throw new Error("WebSocket clients did not receive synced task metadata.");
   }
 
   const mediaReceivedByB = nextSnapshotWhere(wsB, (message) => message.media && message.media.length === 1);
@@ -195,6 +233,7 @@ async function main() {
   const channelWithMedia = channelsWithMedia.channels.find((channel) => channel.code === "ABC123");
   if (
     !channelWithMedia ||
+    channelWithMedia.taskCount !== 1 ||
     channelWithMedia.mediaCount !== 3 ||
     channelWithMedia.mediaSize <= 0 ||
     channelWithMedia.connectedCount !== 2
@@ -264,6 +303,14 @@ async function main() {
   const restored = await fetch(`${persistedBaseUrl}/api/room/ABC123`).then((response) => response.json());
   if (restored.text !== "") {
     throw new Error("Room text was not persisted across server restarts.");
+  }
+  if (
+    !Array.isArray(restored.tasks) ||
+    restored.tasks.length !== 1 ||
+    restored.tasks[0].text !== "Buy milk" ||
+    restored.tasks[0].done !== true
+  ) {
+    throw new Error("Room tasks were not persisted across server restarts.");
   }
   if (
     !restored.media ||

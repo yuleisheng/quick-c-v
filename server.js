@@ -11,6 +11,7 @@ const { getLanUrls } = require("./lib/network");
 
 const HOST = process.env.HOST || "0.0.0.0";
 const MAX_TEXT_BYTES = 512 * 1024;
+const MAX_TASK_BYTES = 128 * 1024;
 const MAX_UPLOAD_MEGABYTES = 500;
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MEGABYTES * 1024 * 1024;
 const CODE_REGEX = /^[A-Z0-9]{1,32}$/;
@@ -50,6 +51,48 @@ function normalizeCode(input) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function normalizeTasks(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.slice(0, 200).map((task) => ({
+    id: String(task?.id || crypto.randomUUID()).slice(0, 120),
+    text: String(task?.text || "")
+      .replace(/[\u0000-\u001f\u007f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1000),
+    done: Boolean(task?.done)
+  }));
+}
+
+function parseTasks(value) {
+  try {
+    return normalizeTasks(JSON.parse(value || "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function stringifyTasks(tasks) {
+  return JSON.stringify(normalizeTasks(tasks));
+}
+
+function isTaskCompletionOnlyUpdate(currentTasks, nextTasks) {
+  const current = normalizeTasks(currentTasks);
+  const next = normalizeTasks(nextTasks);
+
+  if (current.length !== next.length) {
+    return false;
+  }
+
+  return current.every((task, index) => (
+    task.id === next[index].id &&
+    task.text === next[index].text
+  ));
 }
 
 function mediaInfoFor(input, fallbackName = "") {
@@ -124,6 +167,7 @@ function createStore(dbPath) {
     CREATE TABLE IF NOT EXISTS rooms (
       code TEXT PRIMARY KEY,
       text TEXT NOT NULL DEFAULT '',
+      tasks TEXT NOT NULL DEFAULT '[]',
       updated_at TEXT NOT NULL
     );
 
@@ -140,24 +184,35 @@ function createStore(dbPath) {
     )
   `);
 
-  const findRoom = db.prepare("SELECT code, text, updated_at AS updatedAt FROM rooms WHERE code = ?");
-  const insertRoom = db.prepare("INSERT INTO rooms (code, text, updated_at) VALUES (?, '', ?)");
+  const roomColumns = db.prepare("PRAGMA table_info(rooms)").all().map((column) => column.name);
+  if (!roomColumns.includes("tasks")) {
+    db.exec("ALTER TABLE rooms ADD COLUMN tasks TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  const findRoom = db.prepare("SELECT code, text, tasks, updated_at AS updatedAt FROM rooms WHERE code = ?");
+  const insertRoom = db.prepare("INSERT INTO rooms (code, text, tasks, updated_at) VALUES (?, '', '[]', ?)");
   const touchRoom = db.prepare("UPDATE rooms SET updated_at = ? WHERE code = ?");
   const saveRoom = db.prepare(`
     INSERT INTO rooms (code, text, updated_at)
     VALUES (?, ?, ?)
     ON CONFLICT(code) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at
   `);
+  const saveRoomTasks = db.prepare(`
+    INSERT INTO rooms (code, text, tasks, updated_at)
+    VALUES (?, '', ?, ?)
+    ON CONFLICT(code) DO UPDATE SET tasks = excluded.tasks, updated_at = excluded.updated_at
+  `);
   const listRooms = db.prepare(`
     SELECT
       rooms.code,
       rooms.text,
+      rooms.tasks,
       rooms.updated_at AS updatedAt,
       COUNT(media.id) AS mediaCount,
       COALESCE(SUM(media.size), 0) AS mediaSize
     FROM rooms
     LEFT JOIN media ON media.code = rooms.code
-    GROUP BY rooms.code, rooms.text, rooms.updated_at
+    GROUP BY rooms.code, rooms.text, rooms.tasks, rooms.updated_at
     ORDER BY rooms.updated_at DESC, rooms.code ASC
   `);
   const insertMedia = db.prepare(`
@@ -201,7 +256,10 @@ function createStore(dbPath) {
         room = findRoom.get(code);
       }
       return {
-        ...room,
+        code: room.code,
+        text: room.text,
+        tasks: parseTasks(room.tasks),
+        updatedAt: room.updatedAt,
         media: listMedia.all(code).map((item) => ({
           id: item.id,
           type: item.kind,
@@ -218,6 +276,7 @@ function createStore(dbPath) {
         code: room.code,
         updatedAt: room.updatedAt,
         textLength: room.text.length,
+        taskCount: parseTasks(room.tasks).length,
         mediaCount: Number(room.mediaCount) || 0,
         mediaSize: Number(room.mediaSize) || 0
       }));
@@ -225,6 +284,11 @@ function createStore(dbPath) {
     saveRoom(code, text) {
       const updatedAt = nowIso();
       saveRoom.run(code, text, updatedAt);
+      return this.getRoom(code);
+    },
+    saveTasks(code, tasks) {
+      const updatedAt = nowIso();
+      saveRoomTasks.run(code, stringifyTasks(tasks), updatedAt);
       return this.getRoom(code);
     },
     addMedia(code, file) {
@@ -427,6 +491,7 @@ function createApp(options = {}) {
     broadcast(req.roomCode, {
       type: "snapshot",
       text: room.text,
+      tasks: room.tasks,
       media: room.media,
       updatedAt: room.updatedAt
     });
@@ -444,6 +509,7 @@ function createApp(options = {}) {
     broadcast(req.roomCode, {
       type: "snapshot",
       text: removed.room.text,
+      tasks: removed.room.tasks,
       media: removed.room.media,
       updatedAt: removed.room.updatedAt
     });
@@ -453,7 +519,7 @@ function createApp(options = {}) {
   const wss = new WebSocketServer({
     server,
     path: "/ws",
-    maxPayload: MAX_TEXT_BYTES + 1024
+    maxPayload: MAX_TEXT_BYTES + MAX_TASK_BYTES + 1024
   });
 
   function clientsFor(code) {
@@ -516,6 +582,7 @@ function createApp(options = {}) {
     send(ws, {
       type: "snapshot",
       text: room.text,
+      tasks: room.tasks,
       media: room.media,
       updatedAt: room.updatedAt
     });
@@ -526,6 +593,35 @@ function createApp(options = {}) {
         message = JSON.parse(rawMessage);
       } catch {
         send(ws, { type: "error", error: "Invalid JSON message." });
+        return;
+      }
+
+      if (message.type === "tasksUpdate") {
+        if (!Array.isArray(message.tasks)) {
+          send(ws, { type: "error", error: "Expected a tasks update with tasks." });
+          return;
+        }
+
+        if (Buffer.byteLength(JSON.stringify(message.tasks), "utf8") > MAX_TASK_BYTES) {
+          send(ws, { type: "error", error: "Tasks are too large for this tiny sync app." });
+          return;
+        }
+
+        const nextTasks = normalizeTasks(message.tasks);
+        const room = store.getRoom(code);
+        if (!isLoopbackAddress(req.socket.remoteAddress) && !isTaskCompletionOnlyUpdate(room.tasks, nextTasks)) {
+          send(ws, { type: "error", error: "Only localhost can add, delete, or edit tasks." });
+          return;
+        }
+
+        const saved = store.saveTasks(code, nextTasks);
+        broadcast(code, {
+          type: "snapshot",
+          text: saved.text,
+          tasks: saved.tasks,
+          media: saved.media,
+          updatedAt: saved.updatedAt
+        });
         return;
       }
 
@@ -543,6 +639,7 @@ function createApp(options = {}) {
       broadcast(code, {
         type: "snapshot",
         text: saved.text,
+        tasks: saved.tasks,
         media: saved.media,
         updatedAt: saved.updatedAt
       });
@@ -596,5 +693,6 @@ if (require.main === module) {
 
 module.exports = {
   createApp,
+  isTaskCompletionOnlyUpdate,
   normalizeCode
 };

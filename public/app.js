@@ -13,6 +13,9 @@ const passcodePopover = document.querySelector("#passcodePopover");
 const savedAt = document.querySelector("#savedAt");
 const charCount = document.querySelector("#charCount");
 const textEditor = document.querySelector("#textEditor");
+const addTaskButton = document.querySelector("#addTaskButton");
+const taskPanel = document.querySelector("#taskPanel");
+const taskList = document.querySelector("#taskList");
 const leaveButton = document.querySelector("#leaveButton");
 const uploadButton = document.querySelector("#uploadButton");
 const mediaInput = document.querySelector("#mediaInput");
@@ -24,15 +27,24 @@ const previewBody = document.querySelector("#previewBody");
 const previewCloseButton = document.querySelector("#previewCloseButton");
 
 const CODE_REGEX = /^[A-Z0-9]{1,32}$/;
+const canManageTasks = isLocalhostName(window.location.hostname);
 let socket;
 let roomCode = "";
 let reconnectTimer;
 let channelRefreshTimer;
 let dragDepth = 0;
 let mediaItems = [];
+let taskItems = [];
+let currentTasksText = "[]";
+let hasPendingTaskChanges = false;
 
 function normalizeCode(value) {
   return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function isLocalhostName(value) {
+  const host = String(value || "").toLowerCase();
+  return host === "localhost" || host === "::1" || host === "[::1]" || host.startsWith("127.");
 }
 
 function setStatus(label, mode = "") {
@@ -54,10 +66,20 @@ function setSavedAt(value) {
 
 function updateCount() {
   const count = textEditor.value.length;
+  const taskCount = taskItems.length;
+  const completedCount = taskItems.filter((item) => item.done).length;
   const imageCount = mediaItems.filter((item) => item.type === "image").length;
   const videoCount = mediaItems.filter((item) => item.type === "video").length;
   const fileCount = mediaItems.filter((item) => item.type === "file").length;
   const parts = [`${count.toLocaleString()} ${count === 1 ? "char" : "chars"}`];
+
+  if (taskCount > 0) {
+    parts.push(`${taskCount.toLocaleString()} ${taskCount === 1 ? "task" : "tasks"}`);
+  }
+
+  if (completedCount > 0) {
+    parts.push(`${completedCount.toLocaleString()} done`);
+  }
 
   if (imageCount > 0) {
     parts.push(`${imageCount.toLocaleString()} ${imageCount === 1 ? "image" : "images"}`);
@@ -108,10 +130,14 @@ function formatChannelUpdatedAt(value) {
 
 function channelSummary(channel) {
   const textLength = Number(channel.textLength) || 0;
+  const taskCount = Number(channel.taskCount) || 0;
   const mediaCount = Number(channel.mediaCount) || 0;
   const parts = [];
 
   parts.push(`${textLength.toLocaleString()} ${textLength === 1 ? "char" : "chars"}`);
+  if (taskCount > 0) {
+    parts.push(`${taskCount.toLocaleString()} ${taskCount === 1 ? "task" : "tasks"}`);
+  }
   parts.push(`${mediaCount.toLocaleString()} ${mediaCount === 1 ? "file" : "files"}`);
 
   return parts.join(" · ");
@@ -148,6 +174,222 @@ function resetDragState() {
   dragDepth = 0;
   setDragActive(false);
 }
+
+function createTaskId() {
+  try {
+    if (globalThis.crypto?.randomUUID) {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch {}
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeTaskText(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s*\n+\s*/g, " ");
+}
+
+function createTask(text = "", done = false, id = createTaskId()) {
+  return {
+    id,
+    text: normalizeTaskText(text),
+    done: Boolean(done)
+  };
+}
+
+function sanitizeTask(task) {
+  if (!task || typeof task !== "object") {
+    return createTask();
+  }
+
+  return createTask(task.text, task.done, String(task.id || createTaskId()).slice(0, 120));
+}
+
+function serializeTasks(tasks = taskItems) {
+  return JSON.stringify(tasks.map((task) => ({
+    id: task.id,
+    text: normalizeTaskText(task.text),
+    done: Boolean(task.done)
+  })));
+}
+
+function placeCaretAtEnd(element) {
+  element.focus();
+
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  range.collapse(false);
+
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function focusTaskDescription(id) {
+  window.requestAnimationFrame(() => {
+    const description = Array.from(taskList.querySelectorAll("[data-task-description]"))
+      .find((element) => element.dataset.taskDescription === id);
+    if (description) {
+      placeCaretAtEnd(description);
+    }
+  });
+}
+
+function sendCurrentTasks() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    setStatus("Offline", "offline");
+    return false;
+  }
+
+  setStatus("Saving", "saving");
+  socket.send(JSON.stringify({
+    type: "tasksUpdate",
+    tasks: taskItems
+  }));
+  return true;
+}
+
+function sendTasksUpdate() {
+  currentTasksText = serializeTasks();
+  hasPendingTaskChanges = true;
+  updateCount();
+  sendCurrentTasks();
+}
+
+function renderTaskRow(task) {
+  const row = document.createElement("div");
+  row.className = task.done ? "task-row is-done" : "task-row";
+  row.dataset.taskId = task.id;
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = task.done;
+  checkbox.setAttribute("aria-label", "Complete task");
+
+  const description = document.createElement("span");
+  description.className = "task-description";
+  description.textContent = task.text;
+  description.spellcheck = true;
+  description.dataset.placeholder = "Task description";
+  description.dataset.taskDescription = task.id;
+  if (canManageTasks) {
+    description.setAttribute("contenteditable", "true");
+    description.setAttribute("role", "textbox");
+    description.setAttribute("aria-label", "Task description");
+  }
+
+  const remove = document.createElement("button");
+  remove.className = "task-remove";
+  remove.type = "button";
+  remove.title = "Remove";
+  remove.setAttribute("aria-label", "Remove task");
+  remove.append(iconSvg("remove"));
+
+  checkbox.addEventListener("change", () => {
+    task.done = checkbox.checked;
+    row.classList.toggle("is-done", task.done);
+    sendTasksUpdate();
+  });
+
+  if (canManageTasks) {
+    description.addEventListener("input", () => {
+      task.text = normalizeTaskText(description.textContent);
+      sendTasksUpdate();
+    });
+
+    description.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addTask("", { afterId: task.id });
+      }
+
+      if (event.key === "Backspace" && normalizeTaskText(description.textContent) === "" && taskItems.length > 1) {
+        event.preventDefault();
+        removeTask(task.id);
+      }
+    });
+
+    description.addEventListener("paste", (event) => {
+      event.preventDefault();
+      document.execCommand("insertText", false, normalizeTaskText(event.clipboardData.getData("text/plain")));
+    });
+
+    description.addEventListener("blur", () => {
+      const normalized = normalizeTaskText(description.textContent);
+      if (description.textContent !== normalized) {
+        description.textContent = normalized;
+      }
+    });
+
+    remove.addEventListener("click", () => {
+      removeTask(task.id);
+    });
+  }
+
+  row.append(checkbox, description);
+  if (canManageTasks) {
+    row.append(remove);
+  }
+  return row;
+}
+
+function renderTasks(tasks = []) {
+  taskItems = tasks.map(sanitizeTask);
+  taskList.replaceChildren();
+  taskPanel.hidden = taskItems.length === 0;
+
+  for (const task of taskItems) {
+    taskList.append(renderTaskRow(task));
+  }
+
+  currentTasksText = serializeTasks();
+  updateCount();
+}
+
+function addTask(text = "", options = {}) {
+  if (!canManageTasks) {
+    return;
+  }
+
+  const task = createTask(text);
+  const nextItems = [...taskItems];
+  const afterIndex = options.afterId
+    ? nextItems.findIndex((item) => item.id === options.afterId)
+    : -1;
+  const insertIndex = afterIndex >= 0 ? afterIndex + 1 : nextItems.length;
+
+  nextItems.splice(insertIndex, 0, task);
+  renderTasks(nextItems);
+  sendTasksUpdate();
+  focusTaskDescription(task.id);
+}
+
+function removeTask(id) {
+  if (!canManageTasks) {
+    return;
+  }
+
+  const removedIndex = taskItems.findIndex((task) => task.id === id);
+  if (removedIndex < 0) {
+    return;
+  }
+
+  const nextItems = taskItems.filter((task) => task.id !== id);
+  const nextFocusTask = nextItems[Math.min(removedIndex, nextItems.length - 1)];
+
+  renderTasks(nextItems);
+  sendTasksUpdate();
+
+  if (nextFocusTask) {
+    focusTaskDescription(nextFocusTask.id);
+  } else {
+    textEditor.focus();
+  }
+}
+
+addTaskButton.hidden = !canManageTasks;
 
 function iconSvg(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -494,6 +736,8 @@ function showJoin(message = "") {
   }
   resetDragState();
   roomCode = "";
+  renderTasks([]);
+  hasPendingTaskChanges = false;
   renderMedia([]);
   setUploadStatus("");
   passcodePopover.hidden = true;
@@ -533,7 +777,11 @@ function connectSocket() {
   socket = new WebSocket(`${protocol}://${window.location.host}/ws?code=${encodeURIComponent(roomCode)}`);
 
   socket.addEventListener("open", () => {
-    setStatus("Live");
+    if (hasPendingTaskChanges) {
+      sendCurrentTasks();
+    } else {
+      setStatus("Live");
+    }
   });
 
   socket.addEventListener("message", (event) => {
@@ -543,9 +791,17 @@ function connectSocket() {
         textEditor.value = message.text;
         updateCount();
       }
+      const incomingTasksText = serializeTasks(message.tasks || []);
+      if (incomingTasksText === currentTasksText) {
+        hasPendingTaskChanges = false;
+      } else if (hasPendingTaskChanges) {
+        sendCurrentTasks();
+      } else {
+        renderTasks(message.tasks || []);
+      }
       setSavedAt(message.updatedAt);
       renderMedia(message.media || []);
-      setStatus("Live");
+      setStatus(hasPendingTaskChanges ? "Saving" : "Live");
     }
 
     if (message.type === "channelDeleted") {
@@ -605,6 +861,8 @@ joinForm.addEventListener("submit", async (event) => {
     const room = await loadRoom(code);
     roomCode = room.code;
     textEditor.value = room.text;
+    renderTasks(room.tasks || []);
+    hasPendingTaskChanges = false;
     renderMedia(room.media || []);
     updateCount();
     setSavedAt(room.updatedAt);
@@ -617,6 +875,10 @@ joinForm.addEventListener("submit", async (event) => {
 });
 
 textEditor.addEventListener("input", sendUpdate);
+
+addTaskButton.addEventListener("click", () => {
+  addTask();
+});
 
 uploadButton.addEventListener("click", () => {
   mediaInput.click();
