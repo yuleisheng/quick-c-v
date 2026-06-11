@@ -115,6 +115,7 @@ function createStore(dbPath) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   const db = new DatabaseSync(dbPath);
+  let isClosed = false;
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA busy_timeout = 5000;
@@ -177,6 +178,7 @@ function createStore(dbPath) {
     WHERE code = ? AND id = ?
   `);
   const deleteMedia = db.prepare("DELETE FROM media WHERE code = ? AND id = ?");
+  const deleteRoom = db.prepare("DELETE FROM rooms WHERE code = ?");
   const listMedia = db.prepare(`
     SELECT
       id,
@@ -264,8 +266,23 @@ function createStore(dbPath) {
         }
       };
     },
+    deleteRoom(code) {
+      const room = findRoom.get(code);
+      if (!room) {
+        return undefined;
+      }
+
+      const media = listMedia.all(code).map((item) => ({
+        fileName: item.fileName
+      }));
+      deleteRoom.run(code);
+      return { code, media };
+    },
     close() {
-      db.close();
+      if (!isClosed) {
+        isClosed = true;
+        db.close();
+      }
     }
   };
 }
@@ -291,11 +308,19 @@ function validatePasscodeParam(req, res, next) {
 
 function requireHostRequest(req, res, next) {
   if (!isLoopbackAddress(req.socket.remoteAddress)) {
-    res.status(403).json({ error: "Channel board is only available on the host machine." });
+    res.status(403).json({ error: "Channel controls are only available on the host machine." });
     return;
   }
 
   next();
+}
+
+async function removeUploadedFiles(uploadDir, mediaItems) {
+  await Promise.all(mediaItems.map(async (item) => {
+    try {
+      await fs.promises.rm(uploadedFilePath(uploadDir, item.fileName), { force: true });
+    } catch {}
+  }));
 }
 
 function applyUpload(upload, fieldName) {
@@ -375,6 +400,18 @@ function createApp(options = {}) {
     });
   });
 
+  app.delete("/api/channels/:code", requireHostRequest, validatePasscodeParam, async (req, res) => {
+    const removed = store.deleteRoom(req.roomCode);
+    if (!removed) {
+      res.status(404).json({ error: "Channel not found." });
+      return;
+    }
+
+    await removeUploadedFiles(uploadDir, removed.media);
+    disconnectChannelClients(req.roomCode);
+    res.status(204).end();
+  });
+
   app.get("/api/room/:code", validatePasscodeParam, (req, res) => {
     const room = store.getRoom(req.roomCode);
     res.json(room);
@@ -436,6 +473,31 @@ function createApp(options = {}) {
     for (const client of clientsFor(code)) {
       send(client, payload);
     }
+  }
+
+  function disconnectChannelClients(code) {
+    const clients = rooms.get(code);
+    if (!clients) {
+      return;
+    }
+
+    const payload = JSON.stringify({
+      type: "channelDeleted",
+      code,
+      error: "Channel deleted by host."
+    });
+
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload, () => {
+          client.close(1008, "Channel deleted");
+        });
+      } else {
+        client.close(1008, "Channel deleted");
+      }
+    }
+
+    rooms.delete(code);
   }
 
   wss.on("connection", (ws, req) => {

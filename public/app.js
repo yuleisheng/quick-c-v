@@ -109,22 +109,12 @@ function formatChannelUpdatedAt(value) {
 function channelSummary(channel) {
   const textLength = Number(channel.textLength) || 0;
   const mediaCount = Number(channel.mediaCount) || 0;
-  const mediaSize = Number(channel.mediaSize) || 0;
   const parts = [];
 
-  if (textLength > 0) {
-    parts.push(`${textLength.toLocaleString()} ${textLength === 1 ? "char" : "chars"}`);
-  }
+  parts.push(`${textLength.toLocaleString()} ${textLength === 1 ? "char" : "chars"}`);
+  parts.push(`${mediaCount.toLocaleString()} ${mediaCount === 1 ? "file" : "files"}`);
 
-  if (mediaCount > 0) {
-    parts.push(`${mediaCount.toLocaleString()} ${mediaCount === 1 ? "file" : "files"}`);
-  }
-
-  if (mediaSize > 0) {
-    parts.push(formatBytes(mediaSize));
-  }
-
-  return parts.join(" · ") || "Empty";
+  return parts.join(" · ");
 }
 
 function setUploadStatus(message = "") {
@@ -167,7 +157,8 @@ function iconSvg(name) {
   const paths = {
     download: ["M12 3v11", "M7 9l5 5 5-5", "M5 21h14"],
     file: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"],
-    remove: ["M18 6 6 18", "M6 6l12 12"]
+    remove: ["M18 6 6 18", "M6 6l12 12"],
+    trash: ["M3 6h18", "M8 6V4h8v2", "M19 6l-1 14H6L5 6", "M10 11v5", "M14 11v5"]
   };
 
   for (const data of paths[name] || []) {
@@ -362,6 +353,35 @@ function renderMedia(items = []) {
   updateCount();
 }
 
+async function deleteChannel(channel) {
+  const shouldDelete = window.confirm(
+    `Delete channel ${channel.code}? This removes its text and synced files from the host.`
+  );
+  if (!shouldDelete) {
+    return;
+  }
+
+  setHostBoardBusy(true);
+  joinError.textContent = "";
+
+  try {
+    const response = await fetch(`/api/channels/${encodeURIComponent(channel.code)}`, {
+      method: "DELETE"
+    });
+
+    if (!response.ok) {
+      const payload = await response.json();
+      throw new Error(payload.error || "Could not delete channel.");
+    }
+
+    await loadChannels();
+  } catch (error) {
+    joinError.textContent = error.message;
+  } finally {
+    setHostBoardBusy(false);
+  }
+}
+
 function renderChannels(channels = []) {
   channelList.replaceChildren();
   hostBoard.hidden = false;
@@ -375,9 +395,12 @@ function renderChannels(channels = []) {
   }
 
   for (const channel of channels) {
-    const row = document.createElement("button");
-    row.className = "channel-row";
-    row.type = "button";
+    const card = document.createElement("article");
+    card.className = "channel-card";
+
+    const openButton = document.createElement("button");
+    openButton.className = "channel-open";
+    openButton.type = "button";
 
     const details = document.createElement("span");
     details.className = "channel-details";
@@ -386,9 +409,13 @@ function renderChannels(channels = []) {
     code.className = "channel-code";
     code.textContent = channel.code;
 
+    const updated = document.createElement("span");
+    updated.className = "channel-updated";
+    updated.textContent = formatChannelUpdatedAt(channel.updatedAt);
+
     const meta = document.createElement("span");
     meta.className = "channel-meta";
-    meta.textContent = `${formatChannelUpdatedAt(channel.updatedAt)} · ${channelSummary(channel)}`;
+    meta.textContent = channelSummary(channel);
 
     const connectedCount = Number(channel.connectedCount) || 0;
     const badge = document.createElement("span");
@@ -397,13 +424,31 @@ function renderChannels(channels = []) {
       ? `${connectedCount.toLocaleString()} live`
       : "Idle";
 
-    details.append(code, meta);
-    row.append(details, badge);
-    row.addEventListener("click", () => {
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "channel-delete";
+    deleteButton.type = "button";
+    deleteButton.setAttribute("aria-label", `Delete channel ${channel.code}`);
+    deleteButton.title = "Delete channel";
+    deleteButton.append(iconSvg("trash"));
+
+    details.append(code, updated, meta);
+    openButton.append(details, badge);
+    openButton.addEventListener("click", () => {
       codeInput.value = channel.code;
       joinForm.requestSubmit();
     });
-    channelList.append(row);
+    deleteButton.addEventListener("click", () => {
+      deleteChannel(channel);
+    });
+    card.append(openButton, deleteButton);
+    channelList.append(card);
+  }
+}
+
+function setHostBoardBusy(isBusy) {
+  hostBoardRefresh.disabled = isBusy;
+  for (const control of channelList.querySelectorAll("button")) {
+    control.disabled = isBusy;
   }
 }
 
@@ -442,7 +487,7 @@ function startChannelBoard() {
   channelRefreshTimer = setInterval(loadChannels, 5000);
 }
 
-function showJoin() {
+function showJoin(message = "") {
   clearTimeout(reconnectTimer);
   if (socket) {
     socket.close();
@@ -455,7 +500,7 @@ function showJoin() {
   passcodeButton.setAttribute("aria-expanded", "false");
   editorView.hidden = true;
   joinView.hidden = false;
-  joinError.textContent = "";
+  joinError.textContent = message;
   codeInput.focus();
   startChannelBoard();
 }
@@ -501,6 +546,13 @@ function connectSocket() {
       setSavedAt(message.updatedAt);
       renderMedia(message.media || []);
       setStatus("Live");
+    }
+
+    if (message.type === "channelDeleted") {
+      const deletedCode = roomCode;
+      window.history.replaceState(null, "", window.location.pathname);
+      showJoin(message.error || "Channel deleted by host.");
+      codeInput.value = deletedCode;
     }
 
     if (message.type === "error") {

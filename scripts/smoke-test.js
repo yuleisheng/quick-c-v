@@ -48,6 +48,28 @@ function nextSnapshotWhere(ws, predicate) {
   }), "Timed out waiting for the expected snapshot message.");
 }
 
+function nextMessageWhere(ws, predicate, timeoutMessage) {
+  return withTimeout(new Promise((resolve) => {
+    ws.on("message", function onMessage(raw) {
+      const message = JSON.parse(raw);
+      if (predicate(message)) {
+        ws.off("message", onMessage);
+        resolve(message);
+      }
+    });
+  }), timeoutMessage);
+}
+
+function waitForClose(ws) {
+  if (ws.readyState === WebSocket.CLOSED) {
+    return Promise.resolve();
+  }
+
+  return withTimeout(new Promise((resolve) => {
+    ws.once("close", resolve);
+  }), "Timed out waiting for WebSocket to close.");
+}
+
 function withTimeout(promise, message) {
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -199,6 +221,12 @@ async function main() {
     throw new Error("Uploaded image file was not written to disk.");
   }
 
+  const videoFileName = path.basename(new URL(videoUpload.url, baseUrl).pathname);
+  const videoPath = path.join(uploadDir, videoFileName);
+  if (!fs.existsSync(videoPath)) {
+    throw new Error("Uploaded video file was not written to disk.");
+  }
+
   const dmgFileName = path.basename(new URL(dmgUpload.url, baseUrl).pathname);
   const dmgPath = path.join(uploadDir, dmgFileName);
   if (!fs.existsSync(dmgPath)) {
@@ -228,11 +256,12 @@ async function main() {
   sockets.delete(wsB);
   await new Promise((resolve) => server.close(resolve));
 
-  const persisted = createApp({ dbPath });
+  const persisted = createApp({ dbPath, uploadDir });
   const secondPort = await new Promise((resolve) => {
     persisted.server.listen(0, "127.0.0.1", () => resolve(persisted.server.address().port));
   });
-  const restored = await fetch(`http://127.0.0.1:${secondPort}/api/room/ABC123`).then((response) => response.json());
+  const persistedBaseUrl = `http://127.0.0.1:${secondPort}`;
+  const restored = await fetch(`${persistedBaseUrl}/api/room/ABC123`).then((response) => response.json());
   if (restored.text !== "") {
     throw new Error("Room text was not persisted across server restarts.");
   }
@@ -244,6 +273,40 @@ async function main() {
   ) {
     throw new Error("Media metadata was not persisted across server restarts.");
   }
+
+  const wsC = new WebSocket(`ws://127.0.0.1:${secondPort}/ws?code=ABC123`);
+  sockets.add(wsC);
+  const restoredInitial = nextSnapshot(wsC);
+  await waitForOpen(wsC);
+  await restoredInitial;
+
+  const deletedMessageReceived = nextMessageWhere(
+    wsC,
+    (message) => message.type === "channelDeleted",
+    "Timed out waiting for a channel deletion message."
+  );
+  const deletedSocketClosed = waitForClose(wsC);
+  const channelDeletion = await fetch(`${persistedBaseUrl}/api/channels/ABC123`, {
+    method: "DELETE"
+  });
+  if (channelDeletion.status !== 204) {
+    throw new Error("Channel deletion did not return 204.");
+  }
+
+  const deletedMessage = await deletedMessageReceived;
+  if (deletedMessage.code !== "ABC123") {
+    throw new Error("WebSocket clients did not receive the deleted channel code.");
+  }
+  await deletedSocketClosed;
+  sockets.delete(wsC);
+  await waitForFileMissing(videoPath);
+  await waitForFileMissing(dmgPath);
+
+  const channelsAfterDelete = await fetch(`${persistedBaseUrl}/api/channels`).then((response) => response.json());
+  if (channelsAfterDelete.channels.some((channel) => channel.code === "ABC123")) {
+    throw new Error("Deleted channel was still listed on the host channel board.");
+  }
+
   await new Promise((resolve) => persisted.server.close(resolve));
 
   for (const suffix of ["", "-shm", "-wal"]) {

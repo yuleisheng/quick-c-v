@@ -53,7 +53,7 @@ button:disabled {
 }
 
 .join-view {
-  width: min(100%, 520px);
+  width: min(100%, 980px);
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -183,42 +183,55 @@ textarea:focus {
 }
 
 .channel-list {
-  max-height: 280px;
+  max-height: min(56vh, 520px);
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  align-items: stretch;
+  gap: 10px;
   overflow-y: auto;
 }
 
-.channel-row {
+.channel-card {
   width: 100%;
-  min-height: 62px;
+  min-height: 104px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  align-items: start;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   color: #151714;
   background: #fbfcf8;
-  text-align: left;
 }
 
-.channel-row:hover,
-.channel-row:focus-visible {
+.channel-card:hover,
+.channel-card:focus-within {
   border-color: rgba(23, 107, 91, 0.42);
   background: #f3f7ef;
 }
 
-.channel-row:focus-visible {
+.channel-open {
+  min-width: 0;
+  min-height: 102px;
+  display: grid;
+  gap: 8px;
+  align-content: center;
+  padding: 12px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.channel-open:focus-visible,
+.channel-delete:focus-visible {
   outline: 3px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -3px;
 }
 
 .channel-details {
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 4px;
 }
 
 .channel-code {
@@ -228,12 +241,14 @@ textarea:focus {
   font-size: 15px;
 }
 
+.channel-updated,
 .channel-meta,
 .channel-empty {
   color: var(--ink-soft);
   font-size: 12px;
 }
 
+.channel-updated,
 .channel-meta {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -243,9 +258,11 @@ textarea:focus {
 .channel-empty {
   margin: 0;
   padding: 12px 0;
+  grid-column: 1 / -1;
 }
 
 .channel-badge {
+  justify-self: start;
   min-width: 52px;
   min-height: 28px;
   display: inline-flex;
@@ -262,6 +279,31 @@ textarea:focus {
 .channel-badge.is-live {
   color: var(--accent-strong);
   background: #e0eee8;
+}
+
+.channel-delete {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  margin: 10px 10px 0 0;
+  border-radius: 8px;
+  color: var(--danger);
+  background: transparent;
+}
+
+.channel-delete:hover {
+  background: #fae7e4;
+}
+
+.channel-delete svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .editor-view {
@@ -631,13 +673,8 @@ textarea {
     height: 48px;
   }
 
-  .channel-row {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-  }
-
-  .channel-badge {
-    justify-self: start;
+  .channel-list {
+    grid-template-columns: 1fr;
   }
 
   .editor-view {
