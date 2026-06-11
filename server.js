@@ -11,7 +11,8 @@ const { getLanUrls } = require("./lib/network");
 
 const HOST = process.env.HOST || "0.0.0.0";
 const MAX_TEXT_BYTES = 512 * 1024;
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_UPLOAD_MEGABYTES = 500;
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MEGABYTES * 1024 * 1024;
 const CODE_REGEX = /^[A-Z0-9]{1,32}$/;
 const SERVER_STATE_PATH = path.join(__dirname, "data", "server.json");
 const MEDIA_TYPES = new Map([
@@ -25,7 +26,20 @@ const MEDIA_TYPES = new Map([
   ["video/mp4", { kind: "video", extension: ".mp4" }],
   ["video/mpeg", { kind: "video", extension: ".mpeg" }],
   ["video/quicktime", { kind: "video", extension: ".mov" }],
-  ["video/webm", { kind: "video", extension: ".webm" }]
+  ["video/webm", { kind: "video", extension: ".webm" }],
+  ["application/x-apple-diskimage", {
+    kind: "file",
+    extension: ".dmg",
+    mimeType: "application/x-apple-diskimage"
+  }]
+]);
+const EXTENSION_TYPES = new Map([
+  [".dmg", {
+    kind: "file",
+    extension: ".dmg",
+    mimeType: "application/x-apple-diskimage",
+    fallbackMimeTypes: new Set(["", "application/octet-stream", "application/x-apple-diskimage"])
+  }]
 ]);
 
 function normalizeCode(input) {
@@ -38,12 +52,29 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function mediaInfoFor(mimeType) {
-  return MEDIA_TYPES.get(String(mimeType || "").toLowerCase());
+function mediaInfoFor(input, fallbackName = "") {
+  const file = input && typeof input === "object" ? input : undefined;
+  const mimeType = String(file ? file.mimetype || "" : input || "").toLowerCase();
+  const originalName = file ? file.originalname || "" : fallbackName;
+  const directInfo = MEDIA_TYPES.get(mimeType);
+  if (directInfo) {
+    return directInfo;
+  }
+
+  const extensionInfo = EXTENSION_TYPES.get(path.extname(String(originalName)).toLowerCase());
+  if (extensionInfo?.fallbackMimeTypes.has(mimeType)) {
+    return extensionInfo;
+  }
+
+  return undefined;
 }
 
-function fileTypeFor(mimeType) {
-  return mediaInfoFor(mimeType)?.kind || "";
+function fileTypeFor(file) {
+  return mediaInfoFor(file)?.kind || "";
+}
+
+function storedMimeTypeFor(file) {
+  return mediaInfoFor(file)?.mimeType || String(file.mimetype || "application/octet-stream").toLowerCase();
 }
 
 function displayNameFor(originalName, fallback) {
@@ -165,8 +196,8 @@ function createStore(dbPath) {
         code,
         fileName: file.filename,
         originalName: displayNameFor(file.originalname, file.filename),
-        mimeType: file.mimetype,
-        kind: fileTypeFor(file.mimetype),
+        mimeType: storedMimeTypeFor(file),
+        kind: fileTypeFor(file),
         size: file.size,
         createdAt: nowIso()
       };
@@ -228,7 +259,7 @@ function applyUpload(upload, fieldName) {
       }
 
       if (error.code === "LIMIT_FILE_SIZE") {
-        res.status(413).json({ error: "Uploads must be 100 MB or smaller." });
+        res.status(413).json({ error: `Uploads must be ${MAX_UPLOAD_MEGABYTES} MB or smaller.` });
         return;
       }
 
@@ -252,7 +283,7 @@ function createApp(options = {}) {
         callback(null, uploadDir);
       },
       filename(req, file, callback) {
-        const mediaInfo = mediaInfoFor(file.mimetype);
+        const mediaInfo = mediaInfoFor(file);
         if (!mediaInfo) {
           callback(new Error("Unsupported media type"));
           return;
@@ -268,7 +299,7 @@ function createApp(options = {}) {
       files: 1
     },
     fileFilter(req, file, callback) {
-      callback(null, Boolean(mediaInfoFor(file.mimetype)));
+      callback(null, Boolean(mediaInfoFor(file)));
     }
   });
 
@@ -294,7 +325,7 @@ function createApp(options = {}) {
 
   app.post("/api/room/:code/media", validatePasscodeParam, applyUpload(upload, "file"), (req, res) => {
     if (!req.file) {
-      res.status(400).json({ error: "Upload an image or video file." });
+      res.status(400).json({ error: "Upload an image, video, or DMG file." });
       return;
     }
 

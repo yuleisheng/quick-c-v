@@ -351,6 +351,7 @@ textarea {
   color: inherit;
   background: transparent;
   cursor: pointer;
+  text-decoration: none;
   text-align: left;
 }
 
@@ -361,6 +362,22 @@ textarea {
   min-height: 0;
   object-fit: cover;
   background: #eef1e8;
+}
+
+.file-preview {
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+}
+
+.file-preview svg {
+  width: 34px;
+  height: 34px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .media-actions {

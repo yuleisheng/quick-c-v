@@ -52,6 +52,7 @@ function updateCount() {
   const count = textEditor.value.length;
   const imageCount = mediaItems.filter((item) => item.type === "image").length;
   const videoCount = mediaItems.filter((item) => item.type === "video").length;
+  const fileCount = mediaItems.filter((item) => item.type === "file").length;
   const parts = [`${count.toLocaleString()} ${count === 1 ? "char" : "chars"}`];
 
   if (imageCount > 0) {
@@ -60,6 +61,10 @@ function updateCount() {
 
   if (videoCount > 0) {
     parts.push(`${videoCount.toLocaleString()} ${videoCount === 1 ? "video" : "videos"}`);
+  }
+
+  if (fileCount > 0) {
+    parts.push(`${fileCount.toLocaleString()} ${fileCount === 1 ? "file" : "files"}`);
   }
 
   charCount.textContent = parts.join(" · ");
@@ -86,8 +91,19 @@ function setUploadStatus(message = "") {
   uploadStatus.textContent = message;
 }
 
-function isMediaFile(file) {
-  return Boolean(file) && (file.type.startsWith("image/") || file.type.startsWith("video/"));
+function isDmgFile(file) {
+  return Boolean(file) && (
+    file.type === "application/x-apple-diskimage" ||
+    String(file.name || "").toLowerCase().endsWith(".dmg")
+  );
+}
+
+function isSupportedUploadFile(file) {
+  return Boolean(file) && (
+    file.type.startsWith("image/") ||
+    file.type.startsWith("video/") ||
+    isDmgFile(file)
+  );
 }
 
 function hasDraggedFiles(event) {
@@ -110,6 +126,7 @@ function iconSvg(name) {
 
   const paths = {
     download: ["M12 3v11", "M7 9l5 5 5-5", "M5 21h14"],
+    file: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"],
     remove: ["M18 6 6 18", "M6 6l12 12"]
   };
 
@@ -189,8 +206,8 @@ async function uploadMediaFiles(files) {
     return;
   }
 
-  if (!selectedFiles.every(isMediaFile)) {
-    setUploadStatus("Images and videos only");
+  if (!selectedFiles.every(isSupportedUploadFile)) {
+    setUploadStatus("Images, videos, and DMG files only");
     return;
   }
 
@@ -224,18 +241,34 @@ function renderMedia(items = []) {
     const card = document.createElement("article");
     card.className = "media-item";
 
-    const previewButton = document.createElement("button");
+    const previewButton = document.createElement(item.type === "file" ? "a" : "button");
     previewButton.className = "media-open";
-    previewButton.type = "button";
-    previewButton.setAttribute("aria-label", `Preview ${item.name || "media"}`);
+    previewButton.setAttribute(
+      "aria-label",
+      `${item.type === "file" ? "Download" : "Preview"} ${item.name || "file"}`
+    );
 
-    const preview = document.createElement(item.type === "video" ? "video" : "img");
-    preview.src = item.url;
-    preview.className = "media-preview";
+    if (item.type === "file") {
+      previewButton.href = item.url;
+      previewButton.download = item.name || "quickcv-file";
+    } else {
+      previewButton.type = "button";
+    }
+
+    let preview;
+    if (item.type === "file") {
+      preview = document.createElement("div");
+      preview.className = "media-preview file-preview";
+      preview.append(iconSvg("file"));
+    } else {
+      preview = document.createElement(item.type === "video" ? "video" : "img");
+      preview.src = item.url;
+      preview.className = "media-preview";
+    }
 
     if (item.type === "video") {
       preview.preload = "metadata";
-    } else {
+    } else if (item.type === "image") {
       preview.alt = item.name || "Synced image";
       preview.loading = "lazy";
     }
@@ -273,7 +306,9 @@ function renderMedia(items = []) {
     meta.append(name, size);
     previewButton.append(preview, meta);
     card.append(previewButton, actions);
-    previewButton.addEventListener("click", () => openPreview(item));
+    if (item.type !== "file") {
+      previewButton.addEventListener("click", () => openPreview(item));
+    }
     download.addEventListener("click", (event) => {
       event.stopPropagation();
     });

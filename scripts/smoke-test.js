@@ -142,11 +142,50 @@ async function main() {
     throw new Error("WebSocket clients did not receive synced video metadata.");
   }
 
-  const deleteReceivedByB = nextSnapshotWhere(wsB, (message) => message.media && message.media.length === 1);
+  const dmgReceivedByB = nextSnapshotWhere(wsB, (message) => message.media && message.media.length === 3);
+  const tinyDmg = new Blob([Buffer.from("tiny dmg placeholder")], { type: "application/octet-stream" });
+  const dmgForm = new FormData();
+  dmgForm.set("file", tinyDmg, "installer.dmg");
+  const dmgUpload = await fetch(`${baseUrl}/api/room/ABC123/media`, {
+    method: "POST",
+    body: dmgForm
+  }).then((response) => response.json());
+  if (
+    dmgUpload.type !== "file" ||
+    dmgUpload.mimeType !== "application/x-apple-diskimage" ||
+    !dmgUpload.url.endsWith(".dmg")
+  ) {
+    throw new Error("DMG upload did not return file metadata.");
+  }
+
+  const dmgSnapshot = await dmgReceivedByB;
+  if (dmgSnapshot.media[2].name !== "installer.dmg") {
+    throw new Error("WebSocket clients did not receive synced DMG metadata.");
+  }
+
+  const unsupportedForm = new FormData();
+  unsupportedForm.set("file", new Blob([Buffer.from("not allowed")], {
+    type: "application/octet-stream"
+  }), "archive.bin");
+  const unsupportedUpload = await fetch(`${baseUrl}/api/room/ABC123/media`, {
+    method: "POST",
+    body: unsupportedForm
+  });
+  if (unsupportedUpload.status !== 400) {
+    throw new Error("Generic binary upload should not be accepted without a DMG extension.");
+  }
+
+  const deleteReceivedByB = nextSnapshotWhere(wsB, (message) => message.media && message.media.length === 2);
   const uploadFileName = path.basename(new URL(upload.url, baseUrl).pathname);
   const uploadPath = path.join(uploadDir, uploadFileName);
   if (!fs.existsSync(uploadPath)) {
     throw new Error("Uploaded image file was not written to disk.");
+  }
+
+  const dmgFileName = path.basename(new URL(dmgUpload.url, baseUrl).pathname);
+  const dmgPath = path.join(uploadDir, dmgFileName);
+  if (!fs.existsSync(dmgPath)) {
+    throw new Error("Uploaded DMG file was not written to disk.");
   }
 
   const deletion = await fetch(`${baseUrl}/api/room/ABC123/media/${upload.id}`, {
@@ -157,7 +196,11 @@ async function main() {
   }
 
   const deleteSnapshot = await deleteReceivedByB;
-  if (deleteSnapshot.media.length !== 1 || deleteSnapshot.media[0].name !== "clip.mp4") {
+  if (
+    deleteSnapshot.media.length !== 2 ||
+    !deleteSnapshot.media.some((item) => item.name === "clip.mp4") ||
+    !deleteSnapshot.media.some((item) => item.name === "installer.dmg")
+  ) {
     throw new Error("WebSocket clients did not receive synced media deletion.");
   }
   await waitForFileMissing(uploadPath);
@@ -176,7 +219,12 @@ async function main() {
   if (restored.text !== "") {
     throw new Error("Room text was not persisted across server restarts.");
   }
-  if (!restored.media || restored.media.length !== 1 || restored.media[0].name !== "clip.mp4") {
+  if (
+    !restored.media ||
+    restored.media.length !== 2 ||
+    !restored.media.some((item) => item.name === "clip.mp4") ||
+    !restored.media.some((item) => item.name === "installer.dmg")
+  ) {
     throw new Error("Media metadata was not persisted across server restarts.");
   }
   await new Promise((resolve) => persisted.server.close(resolve));
